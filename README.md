@@ -5,34 +5,29 @@ Production-style URL shortener with rate limiting, click analytics, custom short
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
-![Redis](https://img.shields.io/badge/Redis_(optional)-DC382D?style=for-the-badge&logo=redis&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
 ## Overview
 
-A URL shortener that goes beyond the naive "hash and store" approach:
+A URL shortener that goes beyond naive "hash and store":
 
-1. **Idempotent shortening** - same URL returns same short code (no duplicates)
-2. **Custom short codes** - users can pick their own alias
-3. **Collision-safe random codes** - retries on collision, 62^7 keyspace
-4. **Rate limiting** - sliding window, 60 requests per minute per IP
-5. **Click tracking** - user agent, referrer, and timestamp per redirect
-6. **Analytics** - total clicks, last 7 days, daily breakdown, top referrers
-7. **Admin delete** - protected by a header token
-
-Every redirect records a click so you can see how links perform over time.
+1. Idempotent shortening - same URL returns same short code
+2. Custom short codes - users can pick their own alias
+3. Collision-safe random codes - retries on collision, 62^7 keyspace
+4. Rate limiting - sliding window, 60 requests per minute per IP
+5. Click tracking - user agent, referrer, timestamp per redirect
+6. Analytics - total clicks, last 7 days, daily breakdown, top referrers
+7. Admin delete - protected by header token
 
 ## Problem Statement
 
 A URL shortener looks trivial but has real engineering challenges:
 
-- **Duplicate storage** - shortening the same URL twice should not create two codes
-- **Collisions** - random codes can collide; must retry safely
-- **Abuse** - without rate limiting, bots can flood the service
-- **Analytics** - knowing click counts is not enough; you need time series and referrers
-- **Custom codes** - must validate and check uniqueness
-
-This project addresses each.
+- Duplicate storage - shortening the same URL twice should not create two codes
+- Collisions - random codes can collide; must retry safely
+- Abuse - without rate limiting, bots can flood the service
+- Analytics - knowing click counts is not enough; you need time series and referrers
+- Custom codes - must validate and check uniqueness
 
 ## Solution
 
@@ -43,7 +38,7 @@ A FastAPI service with:
 - GET /analytics/{code}: full analytics response
 - Sliding-window rate limiter per client IP
 - Admin delete with header-based token
-- SQLite schema with indexed clicks table for fast analytics queries
+- SQLite schema with indexed clicks table
 
 ## Architecture
 
@@ -53,14 +48,10 @@ Client
   |                                          |
   |                                          v
   |                                     Generate Code
-  |                                     (or custom)
   |                                          |
   |                                          v
   |                                     SQLite (urls)
   |                                          |
-  |                                          v
-  |                                     Return short_url
-  |
   |-- GET /{code} --> Lookup --> Record Click --> 307 Redirect
   |                     |
   |                     v
@@ -146,8 +137,6 @@ Request:
   "custom_code": "myalias"
 }
 
-custom_code is optional. Omit it for a random 7-char code.
-
 Response:
 {
   "code": "myalias",
@@ -161,8 +150,6 @@ Idempotent: sending the same URL again returns the same code.
 ### GET /{code}
 
 Redirects (307) to the original URL and records a click with user agent + referrer.
-
-curl -I http://localhost:8000/myalias
 
 ### GET /analytics/{code}
 
@@ -190,8 +177,7 @@ List the most recent URLs with click counts.
 
 Delete a URL and its click history. Requires admin header.
 
-curl -X DELETE http://localhost:8000/urls/myalias \
-  -H "X-Admin: admin-secret"
+curl -X DELETE http://localhost:8000/urls/myalias -H "X-Admin: admin-secret"
 
 ### Other Endpoints
 
@@ -208,37 +194,15 @@ curl -X DELETE http://localhost:8000/urls/myalias \
 - Applied to POST /shorten
 - Returns 429 with a clear message when exceeded
 
-For multi-instance deployments, swap the in-memory limiter for Redis (see optional deps).
-
 ## Analytics Details
 
-Every redirect records:
-
-- Timestamp (UTC)
-- User-Agent header
-- Referer header
-
-Aggregated queries return:
-
-- Total click count
-- Clicks in the last 7 days
-- Day-by-day breakdown for the last 7 days
-- Top 5 referrers
-
-The clicks table is indexed on code and clicked_at for fast aggregation.
+Every redirect records timestamp, user-agent, and referer. Aggregated queries return total clicks, clicks in the last 7 days, day-by-day breakdown, and top 5 referrers. The clicks table is indexed on code and clicked_at for fast aggregation.
 
 ## Testing
 
 pytest tests/ -v
 
-Tests cover:
-- Root and health endpoints
-- Shorten with valid URL
-- Shorten with invalid URL returns 400
-- Idempotent shorten returns same code
-- Custom code path
-- Redirect returns 307
-- Analytics records clicks correctly
+Tests cover: root, health, shorten valid, invalid URL returns 400, idempotent shorten, custom code, redirect 307, and analytics.
 
 ## Docker
 
@@ -250,8 +214,6 @@ docker run -p 8000:8000 url-shortener
 
 ## Production Upgrade Path
 
-The project is structured to swap components without rewriting endpoints:
-
 | Component | Dev | Production |
 |-----------|-----|------------|
 | Storage | SQLite | PostgreSQL |
@@ -259,36 +221,27 @@ The project is structured to swap components without rewriting endpoints:
 | Cache | None | Redis (redirect cache) |
 | Analytics | SQL aggregate | Pre-aggregated tables |
 
-Install requirements-optional.txt for the production stack.
-
 ## CI/CD
 
-Every push to main triggers GitHub Actions:
-
-1. Install Python 3.11 + dependencies
-2. Run pytest test suite
-
-See .github/workflows/ci.yml.
+Every push to main triggers GitHub Actions: install deps, run pytest.
 
 ## Key Learnings
 
 - Idempotent shortening requires a reverse lookup on original_url
-- Random code collisions need a bounded retry loop, not infinite retries
+- Random code collisions need a bounded retry loop
 - Sliding window beats fixed window for rate limiting accuracy
-- Indexed clicks table keeps analytics queries fast even at millions of rows
-- 307 preserves the HTTP method; 301 is cached by browsers and hides analytics
-- Custom codes need format + uniqueness validation before storage
-- Admin actions should be gated by header or token, not query params
+- Indexed clicks table keeps analytics fast even at millions of rows
+- 307 preserves the HTTP method; 301 is cached and hides analytics
+- Admin actions should be gated by header, not query params
 
 ## Future Improvements
 
 - Redis-backed rate limiter for multi-instance scaling
 - QR code generation for each short URL
-- Expiring links (TTL field)
+- Expiring links (TTL)
 - User accounts with API keys
-- Custom domains per user
-- Bulk shorten (JSON array of URLs)
-- Prometheus metrics + Grafana dashboard
+- Bulk shorten (JSON array)
+- Prometheus metrics + Grafana
 - Deploy to GCP Cloud Run with Cloud SQL + Memorystore
 
 ## License
